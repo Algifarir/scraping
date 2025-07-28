@@ -63,7 +63,7 @@ import time
 
 
 # Setup driver (non-headless agar stabil)
-chromedriver_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../chromedriver.exe"))
+chromedriver_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../assets/chromedriver.exe"))
 
 options = Options()
 options.add_argument("--window-size=1920,1080")
@@ -76,64 +76,93 @@ driver.get(url)
 
 time.sleep(1)
 
-# ========== 1. Klik dropdown jumlah data per halaman ==========
+# === Setup path
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = os.path.abspath(os.path.join(BASE_DIR, '..', 'assets'))
+os.makedirs(ASSETS_DIR, exist_ok=True)
+CHECKPOINT_FILE = os.path.join(ASSETS_DIR, 'data_checkpoint.csv')
+
+# === Load checkpoint
+if os.path.exists(CHECKPOINT_FILE):
+    df_checkpoint = pd.read_csv(CHECKPOINT_FILE)
+    scraped_links = set(df_checkpoint['link'])
+    all_data = df_checkpoint.values.tolist()
+else:
+    scraped_links = set()
+    all_data = []
+
+# === 1. Klik dropdown jumlah data per halaman
 dropdown_xpath = "//span[@class='k-dropdown-wrap k-state-default']"
 wait.until(EC.element_to_be_clickable((By.XPATH, dropdown_xpath))).click()
+time.sleep(1)
 
-time.sleep(1)   
-
-# ========== 2. Klik "20 per page" ==========
+# === 2. Klik "20 per page"
 menu_20_xpath = "//ul[@class='k-list k-reset']/li[.='20']"
 wait.until(EC.element_to_be_clickable((By.XPATH, menu_20_xpath))).click()
 
-# ========== 3. Loop semua halaman ==========
-all_data = []
+# === 3. Loop semua halaman
 base_url = "https://setpp.kemenkeu.go.id"
 
-page = 0
-while True:
-    # Tunggu tabel muncul
-    wait.until(EC.presence_of_element_located((By.XPATH, "//table[@role='grid']//tbody/tr")))
+def save_checkpoint(data):
+    df = pd.DataFrame(data, columns=["nomor", "judul", "link"])
+    df.to_csv(CHECKPOINT_FILE, index=False, encoding="utf-8-sig")
 
-    rows = driver.find_elements(By.XPATH, "//table[@role='grid']//tbody/tr")
-    for i in range(len(rows)):
+def safe_find(xpath, timeout=10):
+    try:
+        return WebDriverWait(driver, timeout).until(
+            EC.presence_of_all_elements_located((By.XPATH, xpath))
+        )
+    except:
+        return []
+
+while True:
+    rows = safe_find("//table[@role='grid']//tbody/tr")
+    for row in rows:
         try:
-            row = driver.find_elements(By.XPATH, "//table[@role='grid']//tbody/tr")[i]
             td1 = row.find_element(By.XPATH, ".//td[1]").text.strip()
             td2 = row.find_element(By.XPATH, ".//td[2]").text.strip()
             href = row.find_element(By.XPATH, ".//td[1]/a").get_attribute("href")
-        except:
-            href = ""
-            td1 = td1 if 'td1' in locals() else ""
-            td2 = td2 if 'td2' in locals() else ""
+        except Exception as e:
+            td1, td2, href = "", "", ""
+            print(f"[!] Error baca baris: {e}")
+        
+        if href and href not in scraped_links:
+            all_data.append((td1, td2, href))
+            scraped_links.add(href)
 
-        all_data.append((td1, td2, href if href else ""))
+            if len(all_data) % 10 == 0:
+                print(f"✅ Checkpoint: {len(all_data)} data tersimpan")
+                save_checkpoint(all_data)
 
-    print(f"✅ Halaman selesai, total terkumpul: {len(all_data)}")
-
-    # ========== 4. Klik tombol berikutnya ==========
+    # === 4. Klik tombol berikutnya
     try:
-        if(page == 3):
-            break
-        else:
-            page = page + 1
         next_button = driver.find_element(By.XPATH, "/html/body/div[4]/div/div/div/div/div/a[3]")
         if "k-state-disabled" in next_button.get_attribute("class"):
-            break  # terakhir
+            print("🔚 Selesai sampai halaman terakhir.")
+            break
         next_button.click()
-        time.sleep(1)
-    except:
-        break  # tombol next tidak ada
+        time.sleep(1.5)
+    except Exception as e:
+        print(f"[!] Error klik next: {e}")
+        break
 
 driver.quit()
 
+# === Final Save
+save_checkpoint(all_data)
+print(f"✅ Scraping selesai. Total: {len(all_data)}")
+
+
 # ========== 5. Cetak hasil ==========
-for i, (title, kategori, link) in enumerate(all_data, 1):
-    print(f"{i}. {title} | {kategori} | {link}")
+# for i, (title, kategori, link) in enumerate(all_data, 1):
+#     print(f"{i}. {title} | {kategori} | {link}")
 
-now = datetime.now()
-df = pd.DataFrame(all_data, columns=["Judul", "Kategori", "Link"])
-df.to_csv(f"/assets/data_putusan_{now.strftime('%y%m%d%H%M%S')}.csv", index=False, encoding="utf-8-sig")
+# now = datetime.now()
+# df = pd.DataFrame(all_data, columns=["Judul", "Kategori", "Link"])
+# ASSETS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'assets'))
+# os.makedirs(ASSETS_DIR, exist_ok=True)
+# output_file = os.path.join(ASSETS_DIR, f"data_putusan_{now.strftime('%y%m%d%H%M%S')}.csv")
+# df.to_csv(output_file, index=False, encoding="utf-8-sig")
 
-print("✅ Data berhasil disimpan ke file: data_putusan.csv")
+# print("✅ Data berhasil disimpan ke file: data_putusan.csv")
 
